@@ -69,6 +69,7 @@ internal fun DesignSettingsScreen(state: RemoteState, onBack: () -> Unit, root: 
                 SettingsRow(L10n.tr("语言"), if (AppLocalization.language == AppLanguage.Chinese) "简体中文" else "English",
                     "settings-language", onClick = { languageOpen = true })
             }
+            PluginSettings(state.hostId)
         }
     }
     if (protocolOpen) ProtocolChoiceSheet(state.relayTransportMode, state.hostId != null, { protocolOpen = false }) {
@@ -85,7 +86,7 @@ internal fun DesignSettingsScreen(state: RemoteState, onBack: () -> Unit, root: 
 }
 
 @Composable
-private fun SettingsGroup(title: String, padding: androidx.compose.ui.unit.Dp = 16.dp,
+internal fun SettingsGroup(title: String, padding: androidx.compose.ui.unit.Dp = 16.dp,
     spacing: androidx.compose.ui.unit.Dp = 12.dp, tag: String = "", content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -96,7 +97,7 @@ private fun SettingsGroup(title: String, padding: androidx.compose.ui.unit.Dp = 
 }
 
 @Composable
-private fun SettingsRow(title: String, sub: String, tag: String, value: String? = null,
+internal fun SettingsRow(title: String, sub: String, tag: String, value: String? = null,
     minHeight: androidx.compose.ui.unit.Dp = 48.dp, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = minHeight).testTag(tag).orbisKeyboardFocus().clickable(
         interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = onClick),
@@ -136,11 +137,11 @@ internal fun ProtocolChoiceSheet(current: RelayTransportMode, enabled: Boolean, 
 
 @Composable
 internal fun ChoiceRow(title: String, sub: String, selected: Boolean, tag: String,
-    dismissOnSelect: Boolean = false, trailingContent: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
+    dismissOnSelect: Boolean = false, trailingContent: (@Composable () -> Unit)? = null, enabled: Boolean = true, onClick: () -> Unit) {
     val commit = LocalModalCommit.current
     NeumorphSurface(Modifier.fillMaxWidth().testTag(tag).semantics { this.selected = selected },
         style = if (selected) NeumorphStyle.Pressed else NeumorphStyle.Raised, shape = RoundedCornerShape(16.dp),
-        shadowScale = 0.4f, onClick = { if (dismissOnSelect && commit != null) commit(onClick) else onClick() }) {
+        shadowScale = 0.4f, enabled = enabled, onClick = { if (dismissOnSelect && commit != null) commit(onClick) else onClick() }) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {

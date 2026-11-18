@@ -63,11 +63,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val legacyCredentials = CredentialStore(application)
     private val legacyIdentity = E2eIdentityStore(application)
     private val stores = HostStores(application)
+    internal val pluginControls = PluginControlPool(application)
 
     private val lock = Any()
     private val connections = LinkedHashMap<String, HostConnection>()
     private val observationJobs = mutableMapOf<String, Job>()
     private val activeHostId = MutableStateFlow<String?>(null)
+    // The selection is available as soon as persisted pairings are loaded. RemoteState is
+    // published asynchronously and can briefly have no host during application startup.
+    internal val selectedHostId: StateFlow<String?> = activeHostId
     private val pairingOrder = MutableStateFlow<List<HostPairing>>(emptyList())
     private val hostStates = MutableStateFlow<Map<String, RemoteState>>(emptyMap())
     private val pairingErrors = MutableStateFlow<String?>(null)
@@ -190,6 +194,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     /** Removes a pairing, its live connection and everything cached under it. */
     fun unpair(hostId: String? = activeHostId.value) {
         val id = hostId ?: return
+        pluginControls.removeHost(id)
         val connection = synchronized(lock) { connections.remove(id) }
         observationJobs.remove(id)?.cancel()
         connection?.shutdown()
@@ -570,6 +575,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        pluginControls.close()
         synchronized(lock) { connections.values.toList() }.forEach(HostConnection::shutdown)
         synchronized(lock) { connections.clear() }
         stores.sessionGraph.close()

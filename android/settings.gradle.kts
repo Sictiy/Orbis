@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Orbis"
 include(":app")
+include(":plugin-sdk")
+include(":plugin-test-host")

@@ -17,6 +17,9 @@ android {
         versionName = "0.1.57"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // Allow the same instrumentation suite to verify the integration package's
+    // distinct application ID and signature permissions on an isolated device.
+    testBuildType = providers.gradleProperty("orbisTestBuildType").orElse("debug").get()
 
     // 发版签名密钥不进仓库：路径与密码从 ~/.gradle/gradle.properties（或同名 -P 参数）读取。
     // 缺任何一项时 release 直接构建失败，不会悄悄退回各机器各不相同的 debug 签名——
@@ -37,6 +40,12 @@ android {
     }
 
     buildTypes {
+        create("integration") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".integration"
+            versionNameSuffix = "-integration"
+            matchingFallbacks += "debug"
+        }
         release {
             val missing = releaseSigning.filterValues { it == null }.keys
             if (missing.isEmpty()) signingConfig = signingConfigs.getByName("release")
@@ -76,10 +85,13 @@ val buildRelayQuic by tasks.registering(Exec::class) {
     inputs.dir(root.resolve("native/relayquic"))
     inputs.file(root.resolve("scripts/build-relay-quic.py"))
     outputs.file(relayQuicAar)
-    commandLine("python3", root.resolve("scripts/build-relay-quic.py"), relayQuicAar.get().asFile, android.sdkDirectory)
+    val python = providers.environmentVariable("ORBIS_PYTHON").orNull
+        ?: if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+    commandLine(python, root.resolve("scripts/build-relay-quic.py"), relayQuicAar.get().asFile, android.sdkDirectory)
 }
 
 dependencies {
+    implementation(project(":plugin-sdk"))
     implementation(files(relayQuicAar).builtBy(buildRelayQuic))
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.10.0")
@@ -113,10 +125,17 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    add("integrationImplementation", "androidx.compose.ui:ui-test-manifest")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+}
+
+// Plugin instrumented tests use a separate debug-only package to exercise Binder identity.
+// Set ANDROID_SERIAL to the leased test device before running connected tests.
+tasks.matching { it.name == "connectedDebugAndroidTest" }.configureEach {
+    dependsOn(":plugin-test-host:installDebug")
 }

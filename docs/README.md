@@ -1,5 +1,7 @@
 # Documentation Guide
 
+- [Orbis 项目架构导读](architecture/project-guide.md)：整体结构、Agent 接入、消息与同步流程、网络与文件传输，以及源码阅读路线。
+
 - [ADR-0064](adr/0064-protocol-compatibility.md)：协议18起的兼容策略；Relay已部署、Host18/19适配已合并未部署，旧App连接专项通过，完整门禁未验收。
 
 This directory is organized by authority and maintenance horizon. The root `README.md` remains the product and usage overview; `CONTEXT.md` is the domain vocabulary.

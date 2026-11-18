@@ -65,3 +65,4 @@ aqtinstall.log
 *.tar.gz
 *.orbis-build.json
 *.pi-remote-build.json
+.codex

@@ -43,6 +43,13 @@ class LocalizationTest {
         }
     }
 
+    @Test fun pluginMessagesAreTranslatedAndArgumentsStayOpaque() {
+        assertEquals("Result unknown; check the action status first", L10n.format("结果未知，请先检查操作状态", language = AppLanguage.English))
+        assertEquals("结果未知，请先检查操作状态", L10n.format("结果未知，请先检查操作状态", language = AppLanguage.Chinese))
+        assertEquals("插件名 · Unavailable", L10n.format("{0} · 暂不可用", listOf("插件名"), AppLanguage.English))
+        assertEquals("Plugin settings", L10n.format("插件设置", language = AppLanguage.English))
+    }
+
     @Test fun storedFailureChecksSurviveALanguageChange() {
         val key = "已读取内容达到 2 MiB 缓存上限，可清空已读内容后继续"
         assertTrue(L10n.matches(key, key))

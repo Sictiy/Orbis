@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <intent><action android:name="com.orbising.orbis.plugin.BIND" /></intent>
+    </queries>
+    <application android:allowBackup="false" android:label="Orbis plugin test host"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".Launcher" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+    <instrumentation android:name=".ProbeRunner"
+        android:targetPackage="com.orbising.orbis.plugintest"
+        android:label="Orbis plugin IPC probe" />
+</manifest>

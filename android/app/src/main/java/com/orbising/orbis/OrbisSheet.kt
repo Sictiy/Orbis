@@ -59,6 +59,7 @@ internal fun OrbisBottomSheet(
     tonalElevation: Dp = 0.dp,
     dragHandle: (@Composable () -> Unit)? = { DefaultSheetGrip() },
     maxHeightFraction: Float = 1f,
+    dismissible: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val appearance = remember { Animatable(0f) }
@@ -75,12 +76,12 @@ internal fun OrbisBottomSheet(
             action()
         }
     }
-    fun dismiss() = close { currentDismiss() }
-    val dragModifier = Modifier.pointerInput(Unit) {
+    fun dismiss() { if (dismissible) close { currentDismiss() } }
+    val dragModifier = Modifier.pointerInput(dismissible) {
         detectVerticalDragGestures(
             onVerticalDrag = { change, amount ->
                 change.consume()
-                if (!closing) scope.launch { drag.snapTo((drag.value + amount).coerceAtLeast(0f)) }
+                if (!closing && dismissible) scope.launch { drag.snapTo((drag.value + amount).coerceAtLeast(0f)) }
             },
             onDragEnd = {
                 if (drag.value > with(density) { 72.dp.toPx() }) dismiss()
@@ -145,11 +146,15 @@ private fun DefaultSheetGrip() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun OrbisChoiceSheet(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    OrbisBottomSheet(onDismissRequest = onDismiss, maxHeightFraction = 0.88f) {
+internal fun OrbisChoiceSheet(title: String, onDismiss: () -> Unit, headerAction: (@Composable () -> Unit)? = null,
+    dismissible: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    OrbisBottomSheet(onDismissRequest = onDismiss, maxHeightFraction = 0.88f, dismissible = dismissible) {
         Column(Modifier.fillMaxWidth().testTag("orbis-choice-sheet")
             .padding(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                headerAction?.invoke()
+            }
             Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 CompositionLocalProvider(LocalModalCommit provides LocalSheetCommit.current) { content() }
             }

@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Generic same-signature access for optional plugin entry Activities. -->
+    <permission android:name="${applicationId}.permission.PLUGIN_ACCESS" android:protectionLevel="signature" />
+    <uses-permission android:name="${applicationId}.permission.PLUGIN_ACCESS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <intent><action android:name="com.orbising.orbis.plugin.BIND" /></intent>
+        <intent><action android:name="com.orbising.orbis.plugin.ACTIVATE" /></intent>
+        <intent><action android:name="com.orbising.orbis.plugin.SETUP" /></intent>
+        <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+    </queries>
 
     <application
         android:enableOnBackInvokedCallback="true"

@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Each host variant can start only its own signature-protected entry. -->
+        <activity android:name=".FixtureActivationActivity" android:exported="false"
+            android:excludeFromRecents="true" android:noHistory="true" />
+        <activity-alias android:name=".OrbisActivationActivity" android:targetActivity=".FixtureActivationActivity"
+            android:exported="true" android:permission="com.orbising.orbis.permission.PLUGIN_ACCESS">
+            <intent-filter><action android:name="com.orbising.orbis.plugin.ACTIVATE" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".IntegrationActivationActivity" android:targetActivity=".FixtureActivationActivity"
+            android:exported="true" android:permission="com.orbising.orbis.integration.permission.PLUGIN_ACCESS">
+            <intent-filter><action android:name="com.orbising.orbis.plugin.ACTIVATE" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+        </activity-alias>
+        <service android:name=".SurfaceProbeService" android:exported="true" />
+        <!-- Explicit-only second fixture; ordinary discovery still returns one service. -->
+        <service android:name=".SecondPageFixtureService" android:exported="true" />
+        <!-- Controlled delayed reply for navigation race tests. -->
+        <service android:name=".DelayedPageFixtureService" android:exported="true" />
+        <service android:name=".AsyncNavigationFixtureService" android:exported="true" />
+        <service android:name=".PageFixtureService" android:exported="true">
+            <intent-filter><action android:name="com.orbising.orbis.plugin.BIND" /></intent-filter>
+            <meta-data android:name="com.orbising.orbis.plugin.API_VERSION" android:value="1" />
+            <meta-data android:name="com.orbising.orbis.plugin.EMBEDDED_PAGE" android:value="true" />
+        </service>
+    </application>
+</manifest>

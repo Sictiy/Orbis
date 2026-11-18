@@ -1074,12 +1074,14 @@ fun NeumorphTextButton(
     copyFeedback: Boolean? = null,
     /** Staged edits stay in their sheet; only a final action uses its exit callback. */
     dismissOnClick: Boolean = true,
+    disabledTextColor: Color? = null,
+    horizontalPadding: Dp = 16.dp,
 ) {
     val active = enabled && LocalMotionActionsEnabled.current
     var activation by remember { mutableIntStateOf(0) }
     val modalCommit = LocalModalCommit.current
     val contentColor = when {
-        !enabled -> LocalOrbisPalette.current.faint
+        !enabled -> disabledTextColor ?: LocalOrbisPalette.current.faint
         danger -> MaterialTheme.colorScheme.error
         filled -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurface
@@ -1092,7 +1094,7 @@ fun NeumorphTextButton(
         enabled = active,
     ) {
         Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.padding(horizontal = horizontalPadding, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {

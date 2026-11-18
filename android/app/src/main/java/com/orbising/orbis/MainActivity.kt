@@ -238,6 +238,19 @@ class MainActivity : ComponentActivity() {
             OrbisTheme(manageWindow = false) {
                 val model: RemoteViewModel = viewModel()
                 val state by model.state.collectAsStateWithLifecycle()
+                val selectedHostId by model.selectedHostId.collectAsStateWithLifecycle()
+                val pluginControls = model.pluginControls
+                val pluginControl = remember(pluginControls, selectedHostId) { pluginControls.forHost(selectedHostId) }
+                val pluginLifecycle = LocalLifecycleOwner.current.lifecycle
+                PluginActivationHost(pluginControl)
+                LaunchedEffect(pluginControl, pluginLifecycle) {
+                    pluginLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                        while (isActive) {
+                            pluginControl.refresh()
+                            delay(15_000)
+                        }
+                    }
+                }
                 val homeUi by model.homeUi.collectAsStateWithLifecycle()
                 val hosts = homeUi.hosts
                 val pairingError by model.pairingError.collectAsStateWithLifecycle()
@@ -252,6 +265,7 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr,
                     LocalToolDetailAction provides { runtime, summary, part -> model.openToolDetail(runtime, summary, part) },
                     LocalToolContentAvailable provides (state.connection == RelayConnection.ONLINE),
+                    LocalPluginControl provides pluginControl,
                 ) {
                     RemoteApp(state, hosts, pairingError, pairingInProgress, model, homeUi)
                     state.changeViewer?.let { viewer ->
@@ -327,6 +341,11 @@ internal fun RemoteApp(
     var addingHost by rememberSaveable { mutableStateOf(false) }
     var allDownloadsOpen by rememberSaveable { mutableStateOf(false) }
     var homeTab by rememberSaveable { mutableStateOf(HomeTab.Chat) }
+    var selectedPlugin by remember { mutableStateOf<String?>(null) }
+    val pluginNavigation = remember(state.hostId) { PluginNavigationRequests() }
+    val pluginController = LocalPluginControl.current
+    val activePlugin = pluginController?.activeSessions?.firstOrNull { it.selected.componentName().flattenToString() == selectedPlugin }
+    LaunchedEffect(selectedPlugin, activePlugin) { if (selectedPlugin != null && activePlugin == null) selectedPlugin = null }
     // The inline draft owns visibility separately from an optional directory shortcut preset.
     var newSessionOpen by rememberSaveable { mutableStateOf(false) }
     var newSessionCwd by rememberSaveable { mutableStateOf<String?>(null) }
@@ -351,6 +370,11 @@ internal fun RemoteApp(
         // Stop navigation ownership, not the already-dispatched launch request.
         model.selectRuntime(null)
     }
+    fun selectHost(hostId: String) {
+        pluginNavigation.cancel()
+        cancelLaunchIntro()
+        model.selectHost(hostId)
+    }
     // Keep the directory page's drawer, filters, expansion and scroll position across navigation.
     val runtimeListStateHolder = rememberSaveableStateHolder()
     // 会话列表既是默认页，也是聊天页右滑返回时露出的底层页面，因此抽成一处复用。
@@ -363,14 +387,16 @@ internal fun RemoteApp(
                 permanentDirectory = permanentDirectory,
                 draftOpen = newSessionOpen && state.hostId == newSessionHostId,
                 onToggleDraft = {
+                    pluginNavigation.cancel()
                     if (newSessionOpen) { newSessionOpen = false; model.dismissBrowse() }
                     else { newSessionHostId = state.hostId; newSessionCwd = null; newSessionOpen = true }
                 },
                 draftContent = { open -> SessionDraftCard(state, open, newSessionCwd,
-                    model::browseSessions, model::browseInto, model::browseUp, onCancel = { newSessionOpen = false; model.dismissBrowse() }, drafts = sessionDrafts,
+                    model::browseSessions, model::browseInto, model::browseUp, onCancel = { pluginNavigation.cancel(); newSessionOpen = false; model.dismissBrowse() }, drafts = sessionDrafts,
                     onLoadConfiguration = model::loadSessionConfiguration, onSaveConfiguration = model::saveSessionConfiguration) { kind, cwd, text, origin, fieldOrigin ->
                     val submission = model.sendFirstSessionMessage(kind, cwd, text, newSessionHostId)
                     if (submission != null) {
+                        pluginNavigation.cancel()
                         draftOrigin = origin
                         val command = submission.commandId
                         firstDraftSend = command?.let(model::submittedSend)?.let { FirstDraftSend(state.hostId, it, fieldOrigin) }
@@ -380,20 +406,21 @@ internal fun RemoteApp(
                 } },
                 launchIntro = launchIntro,
                 onLaunchPresented = { requestId -> if (launchIntro?.requestId == requestId) launchIntro = null },
-                onDirectoryOpened = { cancelLaunchIntro() },
+                onDirectoryOpened = { pluginNavigation.cancel(); cancelLaunchIntro() },
                 state = homeState,
                 hosts = hosts,
                 preparedCatalog = homeUi?.catalog,
                 preparedSync = homeUi?.sync,
                 preparedDownloadCount = homeUi?.activeDownloads,
                 onOpenRuntime = { hostId, runtimeId ->
+                    pluginNavigation.cancel()
                     cancelLaunchIntro()
                     allDownloadsOpen = false
                     model.openRuntime(hostId, runtimeId)
                 },
                 onCloseRuntimes = model::closeRuntimesOn,
-                onOpenDownloads = { cancelLaunchIntro(); allDownloadsOpen = true },
-                onSelectHost = { hostId -> cancelLaunchIntro(); model.selectHost(hostId) },
+                onOpenDownloads = { pluginNavigation.cancel(); cancelLaunchIntro(); allDownloadsOpen = true },
+                onSelectHost = ::selectHost,
                 onRetryHome = model::refreshHome,
             )
         }
@@ -405,55 +432,56 @@ internal fun RemoteApp(
             // The sibling tab bar owns the bottom system inset; root Scaffolds must not add it again.
             Box(Modifier.weight(1f).fillMaxWidth()
                 .consumeWindowInsets(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))) {
-                androidx.compose.animation.AnimatedContent(targetState = homeTab, transitionSpec = {
+                androidx.compose.animation.AnimatedContent(targetState = selectedPlugin ?: homeTab.key, transitionSpec = {
                     (fadeIn(tween(InteractionMotion.duration(InteractionMotion.FadeIn), delayMillis = InteractionMotion.duration(InteractionMotion.FadeOut))) +
                         androidx.compose.animation.slideInVertically(tween(InteractionMotion.duration(InteractionMotion.FadeIn), delayMillis = InteractionMotion.duration(InteractionMotion.FadeOut))) { 8 })
                         .togetherWith(fadeOut(tween(InteractionMotion.duration(InteractionMotion.FadeOut))))
                         .using(null)
                 }, label = "root-destination") { displayedTab ->
-                rootStateHolder.SaveableStateProvider(displayedTab.key) {
+                rootStateHolder.SaveableStateProvider(displayedTab) {
                     when (displayedTab) {
-                        HomeTab.Chat -> runtimeList()
-                        HomeTab.Providers -> ProviderDialScreen(
+                        HomeTab.Chat.key -> runtimeList()
+                        HomeTab.Providers.key -> ProviderDialScreen(
                             state = state, hosts = hosts,
-                            onSelectHost = model::selectHost,
+                            onSelectHost = ::selectHost,
                             onLoad = model::loadAgentProviders,
                             onEnable = model::switchAgentProvider,
                             onQuerySubscription = model::querySubscription,
                             showBack = false,
                         )
-                        HomeTab.Settings -> StatusScreen(state, model, model.pairingStatus(),
-                            onBack = { homeTab = HomeTab.Chat }, root = true)
+                        HomeTab.Settings.key -> StatusScreen(state, model, model.pairingStatus(),
+                            onBack = { pluginNavigation.cancel(); homeTab = HomeTab.Chat }, root = true)
+                        else -> pluginController?.activeSessions?.firstOrNull { it.selected.componentName().flattenToString() == displayedTab }?.let { PluginRootPage(it) }
                     }
                 }
                 }
             }
-            if (!permanentDirectory) HomeTabBar(homeTab, onSelect = { tab -> cancelLaunchIntro(); homeTab = tab })
+            if (!permanentDirectory) HomeTabBar(homeTab, selectedPlugin, onSelect = { tab -> cancelLaunchIntro(); selectedPlugin = null; homeTab = tab }, onSelectPlugin = { id -> cancelLaunchIntro(); selectedPlugin = id }, navigation = pluginNavigation)
         }
     }
     val rootHome: @Composable () -> Unit = {
         if (permanentDirectory) rootHomeContent()
         else ModalNavigationDrawer(
             drawerState = compactDrawerState,
-            gesturesEnabled = !runtimeSelecting && homeTab == HomeTab.Chat,
+            gesturesEnabled = !runtimeSelecting && selectedPlugin == null && homeTab == HomeTab.Chat,
             drawerContent = {
                 SessionDrawer(
                     state = homeState, hosts = hosts, isOpen = compactDrawerState.isOpen,
                     preparedCatalog = homeUi?.catalog,
-                    onSelectHost = { id -> cancelLaunchIntro(); model.selectHost(id) },
+                    onSelectHost = ::selectHost,
                     onUnpairHost = model::unpair,
-                    onAddHost = { rootScope.launch { compactDrawerState.close() }; cancelLaunchIntro(); addingHost = true },
+                    onAddHost = { pluginNavigation.cancel(); rootScope.launch { compactDrawerState.close() }; cancelLaunchIntro(); addingHost = true },
                     onOpenSession = { host, session ->
                         rootScope.launch { compactDrawerState.close() }
-                        cancelLaunchIntro(); allDownloadsOpen = false; model.openSession(host, session)
+                        pluginNavigation.cancel(); cancelLaunchIntro(); allDownloadsOpen = false; model.openSession(host, session)
                     },
                     onOpenHistory = { host, session ->
-                        cancelLaunchIntro(); allDownloadsOpen = false; model.openOfflineSession(host, session)
+                        pluginNavigation.cancel(); cancelLaunchIntro(); allDownloadsOpen = false; model.openOfflineSession(host, session)
                     },
                     onNewSession = { host, cwd ->
                         rootScope.launch { compactDrawerState.close() }
-                        cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
-                        homeTab = HomeTab.Chat; model.selectHost(host); newSessionHostId = host
+                        pluginNavigation.cancel(); cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
+                        selectedPlugin = null; homeTab = HomeTab.Chat; model.selectHost(host); newSessionHostId = host
                         newSessionCwd = cwd; newSessionOpen = true
                     },
                     onSetArchived = model::setSessionArchivedOn,
@@ -505,27 +533,31 @@ internal fun RemoteApp(
                 if (permanentDirectory) Column(Modifier.width(320.dp).fillMaxHeight().testTag("permanent-directory")) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         SessionDrawer(homeState, hosts,
-                            onSelectHost = { id -> cancelLaunchIntro(); model.selectHost(id) },
-                            onUnpairHost = model::unpair, onAddHost = { addingHost = true },
-                            onOpenSession = { host, session -> cancelLaunchIntro(); allDownloadsOpen = false; model.openSession(host, session) },
-                            onOpenHistory = { host, session -> cancelLaunchIntro(); allDownloadsOpen = false; model.openOfflineSession(host, session) },
+                            onSelectHost = ::selectHost,
+                            onUnpairHost = model::unpair, onAddHost = { pluginNavigation.cancel(); cancelLaunchIntro(); addingHost = true },
+                            onOpenSession = { host, session -> pluginNavigation.cancel(); cancelLaunchIntro(); allDownloadsOpen = false; model.openSession(host, session) },
+                            onOpenHistory = { host, session -> pluginNavigation.cancel(); cancelLaunchIntro(); allDownloadsOpen = false; model.openOfflineSession(host, session) },
                             onNewSession = { host, cwd ->
-                                cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
-                                homeTab = HomeTab.Chat; model.selectHost(host); newSessionHostId = host
+                                pluginNavigation.cancel(); cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
+                                selectedPlugin = null; homeTab = HomeTab.Chat; model.selectHost(host); newSessionHostId = host
                                 newSessionCwd = cwd; newSessionOpen = true
                             },
                             onSetArchived = model::setSessionArchivedOn, preparedCatalog = homeUi?.catalog,
                             onRequestProviders = model::refreshProviderFacts, permanent = true)
                     }
-                    HomeTabBar(homeTab, onSelect = { tab ->
+                    HomeTabBar(homeTab, selectedPlugin, onSelect = { tab ->
                         cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
-                        allDownloadsOpen = false; addingHost = false; draftOrigin = null; homeTab = tab
-                    })
+                        allDownloadsOpen = false; addingHost = false; draftOrigin = null; selectedPlugin = null; homeTab = tab
+                    }, onSelectPlugin = { id ->
+                        cancelLaunchIntro(); model.selectRuntime(null); model.selectOfflineSession(null)
+                        allDownloadsOpen = false; addingHost = false; draftOrigin = null; selectedPlugin = id
+                    }, navigation = pluginNavigation)
                 }
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
             OrbisPageHost(
                 onBack = {
+                    pluginNavigation.cancel()
                     when (page) {
                         HomeOverlay.Pairing -> { addingHost = false; model.clearPairingError() }
                         HomeOverlay.OfflineHistory -> model.selectOfflineSession(null)
@@ -545,22 +577,24 @@ internal fun RemoteApp(
                         error = pairingError ?: state.error, pairingInProgress = pairingInProgress,
                         pair = { relayUrl, code, qrRaw -> model.pair(relayUrl, code, qrRaw) { addingHost = false } },
                         clearError = { model.clearPairingError(); model.clearError() },
-                        onCancel = { addingHost = false; model.clearPairingError() },
+                        onCancel = { pluginNavigation.cancel(); addingHost = false; model.clearPairingError() },
                     )
                     HomeOverlay.OfflineHistory -> AgentTheme(agentBrand(state.sessions[state.selectedOfflineSessionId]?.agentKind)) {
-                        OfflineHistoryScreen(state, state.selectedOfflineSessionId, model, onBack = { model.selectOfflineSession(null) })
+                        OfflineHistoryScreen(state, state.selectedOfflineSessionId, model, onBack = { pluginNavigation.cancel(); model.selectOfflineSession(null) })
                     }
                     HomeOverlay.Chat -> AgentTheme(agentBrand(state.runtimes[state.selectedRuntimeId]?.agentKind ?: state.launchPage?.agentKind ?:
                         state.knownRuntimeSessions[state.selectedRuntimeId]?.let(state.sessions::get)?.agentKind)) {
                         ChatScreen(state, model, firstDraftSend = firstDraftSend, onFirstDraftSend = { firstDraftSend = null },
+                            onBack = { pluginNavigation.cancel(); draftOrigin = null; model.selectRuntime(null) },
                             onAbandonLaunch = { text ->
+                                pluginNavigation.cancel()
                                 val draft = sessionDrafts.draft(state.hostId)
                                 state.launchPage?.let { pending -> draft.agent.value = pending.agentKind ?: draft.agent.value; draft.cwd.value = pending.cwd }
                                 if (text.isNotBlank()) draft.text.value = text
                                 newSessionHostId = state.hostId; newSessionCwd = null; newSessionOpen = true
                             })
                     }
-                    HomeOverlay.Downloads -> HostDownloadsScreen(state, model, onBack = { allDownloadsOpen = false })
+                    HomeOverlay.Downloads -> HostDownloadsScreen(state, model, onBack = { pluginNavigation.cancel(); allDownloadsOpen = false })
                     null -> Unit
                 }
             }
@@ -570,7 +604,7 @@ internal fun RemoteApp(
         }
     }
     BackHandler(enabled = LocalPageActive.current && newSessionOpen && page == null) {
-        newSessionOpen = false; model.dismissBrowse()
+        pluginNavigation.cancel(); newSessionOpen = false; model.dismissBrowse()
     }
     // 共享错误通道按"要不要用户在电脑端动手"分两层显示，**任何一条都不再弹模态确认框**。
     //
@@ -829,7 +863,10 @@ internal fun RuntimeListScreen(
                 TopAppBar(
                     navigationIcon = {
                         NeumorphIconButton(
-                            onClick = { if (selecting) selectedRuntimeIds = emptySet() else if (!permanentDirectory) scope.launch { drawerState.open() } },
+                            onClick = {
+                                if (selecting) selectedRuntimeIds = emptySet()
+                                else if (!permanentDirectory) { onDirectoryOpened(); scope.launch { drawerState.open() } }
+                            },
                             icon = if (selecting) OrbisSymbols.Close else OrbisSymbols.Menu,
                             menuMorph = selecting,
                             contentDescription = if (selecting) L10n.tr("退出多选") else L10n.tr("打开会话目录"),
@@ -1451,6 +1488,7 @@ internal fun ChatScreen(
     firstDraftSend: FirstDraftSend? = null,
     onFirstDraftSend: () -> Unit = {},
     onAbandonLaunch: (String) -> Unit = {},
+    onBack: () -> Unit = { model.selectRuntime(null) },
 ) {
     val runtimeId = state.selectedRuntimeId ?: return
     val actionHaptic = rememberActionHaptic()
@@ -2019,7 +2057,7 @@ internal fun ChatScreen(
                 },
                 navigationIcon = {
                     NeumorphIconButton(
-                        onClick = { model.selectRuntime(null) },
+                        onClick = onBack,
                         icon = OrbisSymbols.ArrowBack,
                         contentDescription = L10n.tr("返回"),
                         size = 40.dp,
@@ -2446,7 +2484,7 @@ internal fun ChatScreen(
             )
             launch?.takeIf { it.failure != null || it.unconfirmed }?.let { failed ->
                 Box(Modifier.align(Alignment.TopCenter)) {
-                    LaunchNotice(failed, onRetry = model::retryLaunch, onBack = { model.selectRuntime(null) },
+                    LaunchNotice(failed, onRetry = model::retryLaunch, onBack = onBack,
                         onAbandon = if (model.canAbandonConfiguredLaunch(failed.requestId)) {
                             { model.abandonConfiguredLaunch()?.let(onAbandonLaunch); Unit }
                         } else null)

@@ -124,3 +124,15 @@ Mods HTTP 接口和加密连接验证已有历史、运行中回复、并行工�
 ## 安全
 
 设备凭据等价于「发消息 + 调用 runtime 发布的 Slash 命令 + 按路径读写 Host 账户可读写的文件」，而不是只读凭据。若需要整机隔离，请使用受限操作系统账户、容器或虚拟机。
+
+### 插件设备测试
+
+插件设备回归默认使用 `plugin-test-host` 的调试版合成服务，仅操作合成数据。运行 `:app:connectedDebugAndroidTest` 时 Gradle 会先安装合成夹具；测试后的 APK 会保留在设备上。请先取得一次性模拟器的共享租约，并将 `ANDROID_SERIAL` 指向该模拟器，避免向其他连接设备安装。以下命令在 Orbis 的 `android` 目录执行：
+
+```powershell
+$env:ANDROID_SERIAL = 'emulator-5554' # 替换成已租用的模拟器序列号
+.\gradlew.bat :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=com.orbising.orbis.PluginTabInstrumentedTest'
+```
+
+
+涉及强制停止合成插件的测试仅在模拟器上运行，结束后会恢复合成插件。

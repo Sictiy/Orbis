@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -82,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.repeatOnLifecycle
 
 internal enum class DrawerAgentFilter(
     val key: String,
@@ -202,6 +205,18 @@ internal fun SessionDrawer(
     permanent: Boolean = false,
 ) {
     val activeHostId = state.hostId
+    val pluginController = LocalPluginControl.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(pluginController, activeHostId, isOpen, lifecycle) {
+        if (isOpen && pluginController != null && pluginController.hostId == activeHostId) {
+            lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                while (true) {
+                    pluginController.refreshHostContributions()
+                    kotlinx.coroutines.delay(1_000)
+                }
+            }
+        }
+    }
     // 只列当前电脑的目录：多台电脑不合并成一棵树，切换在页脚的电脑行（ADR-0030 修订）。
     val activeHostState = hosts.firstOrNull { it.hostId == activeHostId }?.state
     var agentFilterKey by rememberSaveable { mutableStateOf(DrawerAgentFilter.All.key) }
@@ -594,85 +609,117 @@ private fun DrawerHostSwitcher(
     var pendingUnpair by remember { mutableStateOf<HostSnapshot?>(null) }
     LaunchedEffect(activeHostId, hosts.map { it.hostId }) { expanded = false; computers = false }
     val active = hosts.firstOrNull { it.hostId == activeHostId }
-    Box(
+    val pluginGroups = pluginHostContributions(activeHostId)
+    val inlinePlugin = pluginGroups.singleOrNull()?.takeIf { it.canDisplayInline }
+    val pluginStatus = inlinePlugin?.statuses?.firstOrNull()
+    BoxWithConstraints(
         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
     ) {
-        Box(
-            modifier = Modifier.fillMaxWidth().orbisKeyboardFocus().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { computers = false; expanded = true },
-        ) {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = RemoteUi.TouchTarget).padding(horizontal = 8.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(OrbisSymbols.Computer, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(active?.name ?: L10n.tr("未连接"), style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Box(Modifier.size(5.dp).background(if (active?.state?.e2eReady == true) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
-                        Text(if (active?.state?.e2eReady == true) L10n.tr("已连接") else L10n.tr("离线"),
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val inlineAction = inlinePlugin?.takeIf { it.hasAction }
+        // Reserve readable space for the host and plugin statuses before placing
+        // an optional action beside them. Long labels and larger fonts can wrap.
+        val requiredWidth = 230.dp + 80.dp * LocalDensity.current.fontScale + if (hosts.size > 1) 70.dp else 0.dp
+        val separateAction = inlineAction != null && maxWidth < requiredWidth
+        Column(Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().orbisKeyboardFocus().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { computers = false; expanded = true },
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = RemoteUi.TouchTarget).padding(horizontal = 8.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(OrbisSymbols.Computer, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(active?.name ?: L10n.tr("未连接"), style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(Modifier.size(5.dp).background(if (active?.state?.e2eReady == true) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
+                                Text(if (active?.state?.e2eReady == true) L10n.tr("已连接") else L10n.tr("离线"),
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1)
+                            }
+                            if (pluginStatus != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Box(Modifier.size(5.dp).background(pluginToneColor(pluginStatus.tone, LocalOrbisPalette.current), CircleShape))
+                                    Text(pluginStatus.label, modifier = Modifier.testTag("plugin-host-status"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = pluginToneColor(pluginStatus.tone, LocalOrbisPalette.current),
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                        if (inlineAction != null && !separateAction) {
+                            PluginHostActions(activeHostId, inlineAction.session)
+                        }
+                        if (hosts.size > 1) {
+                            Text(
+                                L10n.tr("{0} 台", hosts.size),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            OrbisSymbols.ChevronRight,
+                            contentDescription = if (hosts.size > 1) L10n.tr("切换电脑") else null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-                if (hosts.size > 1) {
-                    Text(
-                        L10n.tr("{0} 台", hosts.size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(
-                    OrbisSymbols.ChevronRight,
-                    contentDescription = if (hosts.size > 1) L10n.tr("切换电脑") else null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        NeumorphMenu(expanded = expanded, onDismissRequest = { expanded = false },
-            page = if (computers) listOf("computers") else emptyList(), onBack = { computers = false }) { renderedPage ->
-            if (renderedPage.isNotEmpty()) {
-            NeumorphMenuItem(text = { Text(L10n.tr("返回电脑菜单")) }, onClick = { computers = false },
-                leadingIcon = { Icon(OrbisSymbols.ArrowBack, contentDescription = null) })
-            hosts.forEach { host ->
-                NeumorphMenuItem(
-                    text = { Text(host.name) },
-                    onClick = { expanded = false; onSelectHost(host.hostId) },
-                    leadingIcon = {
-                        if (host.hostId == activeHostId) {
-                            Icon(OrbisSymbols.Check, contentDescription = L10n.tr("当前电脑"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                        } else {
-                            Icon(OrbisSymbols.Computer, contentDescription = null, modifier = Modifier.size(18.dp))
+                NeumorphMenu(expanded = expanded, onDismissRequest = { expanded = false },
+                    page = if (computers) listOf("computers") else emptyList(), onBack = { computers = false }) { renderedPage ->
+                    if (renderedPage.isNotEmpty()) {
+                        NeumorphMenuItem(text = { Text(L10n.tr("返回电脑菜单")) }, onClick = { computers = false },
+                            leadingIcon = { Icon(OrbisSymbols.ArrowBack, contentDescription = null) })
+                        hosts.forEach { host ->
+                            NeumorphMenuItem(
+                                text = { Text(host.name) },
+                                onClick = { expanded = false; onSelectHost(host.hostId) },
+                                leadingIcon = {
+                                    if (host.hostId == activeHostId) {
+                                        Icon(OrbisSymbols.Check, contentDescription = L10n.tr("当前电脑"), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    } else {
+                                        Icon(OrbisSymbols.Computer, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    }
+                                },
+                                trailingIcon = {
+                                    Text(
+                                        if (host.state.e2eReady) L10n.tr("在线") else L10n.tr("离线"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (host.state.e2eReady) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                            )
                         }
-                    },
-                    trailingIcon = {
-                        Text(
-                            if (host.state.e2eReady) L10n.tr("在线") else L10n.tr("离线"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (host.state.e2eReady) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    } else {
+                        NeumorphMenuItem(text = { Text(L10n.tr("切换电脑")) }, onClick = { computers = true },
+                            leadingIcon = { Icon(OrbisSymbols.Computer, contentDescription = null) })
+                        NeumorphMenuItem(
+                            text = { Text(L10n.tr("添加电脑")) },
+                            onClick = { expanded = false; onAddHost() },
+                            leadingIcon = { Icon(OrbisSymbols.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
                         )
-                    },
-                )
+                        active?.let { host ->
+                            NeumorphMenuItem(
+                                text = { Text(L10n.tr("取消配对「{0}」", host.name), color = MaterialTheme.colorScheme.error) },
+                                onClick = { expanded = false; pendingUnpair = host },
+                                leadingIcon = { Icon(OrbisSymbols.Close, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) },
+                            )
+                        }
+                    }
+                }
             }
-            } else {
-            NeumorphMenuItem(text = { Text(L10n.tr("切换电脑")) }, onClick = { computers = true },
-                leadingIcon = { Icon(OrbisSymbols.Computer, contentDescription = null) })
-            NeumorphMenuItem(
-                text = { Text(L10n.tr("添加电脑")) },
-                onClick = { expanded = false; onAddHost() },
-                leadingIcon = { Icon(OrbisSymbols.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
-            )
-            active?.let { host ->
-                NeumorphMenuItem(
-                    text = { Text(L10n.tr("取消配对「{0}」", host.name), color = MaterialTheme.colorScheme.error) },
-                    onClick = { expanded = false; pendingUnpair = host },
-                    leadingIcon = { Icon(OrbisSymbols.Close, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error) },
-                )
-            }
+            if (separateAction) {
+                Row(Modifier.fillMaxWidth().padding(end = 8.dp), horizontalArrangement = Arrangement.End) {
+                    PluginHostActions(activeHostId, inlineAction.session)
+                }
             }
         }
     }
+    if (inlinePlugin == null && pluginGroups.isNotEmpty()) PluginHostContributionRows(activeHostId, pluginGroups)
+    PluginHostFeedback(activeHostId)
     pendingUnpair?.let { host ->
         NeumorphDialog(onDismissRequest = { pendingUnpair = null },
             title = { Text(L10n.tr("取消配对 {0}？", host.name)) },
